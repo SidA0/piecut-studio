@@ -1,53 +1,20 @@
 const $=id=>document.getElementById(id);
-const API_BASE='http://127.0.0.1:8765';
-const apiUrl=route=>API_BASE+route;
-let engineReady=false;
-let connectionChecking=false,pendingAnalysis=false;
-async function checkConnection(){
-  if(connectionChecking)return;
-  connectionChecking=true;
-  if(!engineReady)$('connection-message').textContent='Checking for the local engine at 127.0.0.1:8765…';
-  const controller=new AbortController();
-  const timeout=setTimeout(()=>controller.abort(),4000);
-  try{
-    const response=await fetch(apiUrl('/api/health'),{cache:'no-store',signal:controller.signal});
-    const result=await response.json();
-    if(!response.ok||result.status!=='ready')throw Error('CAD engine unavailable');
-    engineReady=true;
-    $('engine-status').textContent='LOCAL CAD ENGINE READY';
-    $('connection-message').textContent='Connected. Choose a STEP or STP file below.';
-    $('connection-message').classList.add('ready');
-    if(pendingAnalysis&&encoded){pendingAnalysis=false;analyze()}
-  }catch(error){
-    engineReady=false;
-    $('engine-status').textContent='DIRECT CONNECTION UNAVAILABLE';
-    $('connection-message').textContent='Start the companion on this computer. This page checks again automatically. If your browser blocks the connection, use Open local workspace below.';
-    $('connection-message').classList.remove('ready');
-  }finally{
-    clearTimeout(timeout);
-    connectionChecking=false;
-  }
-}
-$('retry-connection').addEventListener('click',checkConnection);
-window.addEventListener('focus',()=>{if(!engineReady)checkConnection()});
-setInterval(()=>{if(!engineReady&&document.visibilityState==='visible')checkConnection()},5000);
-checkConnection();
 let selectedFile=null,encoded=null,analysis=null,selectedBodies=null,counts=null,bendAngles=null,timer=null,revision=0,tradeOptions=[],tradeSelected=0,generatedTradeKey=null,generatedDownload=null;
 const mm=n=>Number(n).toFixed(2),inch=n=>(Number(n)/25.4).toFixed(2);
 const prec=n=>Number(n).toFixed(3);
 function message(s,error=false){$('message').textContent=s;$('message').classList.toggle('error',error)}
 function requestData(extra={}){return {filename:selectedFile.name,data:encoded,options:{max_angle:Number($('max-angle').value),selected_bodies:selectedBodies,segments:counts,bend_angles:bendAngles,jig:$('jig').checked,id_holes:$('id-holes').checked,trade_study:$('trade-study-toggle').checked,experimental_standard_radius:$('standard-radius').checked,profile_weight:Number($('profile-weight').value),...extra}}}
-async function post(route,data){const response=await fetch(apiUrl(route),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const result=await response.json();if(!response.ok)throw Error(result.error||'Request failed');return result}
+async function post(route,data){const response=await fetch(route,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const result=await response.json();if(!response.ok)throw Error(result.error||'Request failed');return result}
 async function readFile(file){
   if(!file)return;
   if(timer){clearInterval(timer);timer=null}
-  selectedFile=file;encoded=null;analysis=null;selectedBodies=null;counts=null;bendAngles=null;generatedTradeKey=null;generatedDownload=null;pendingAnalysis=false;revision++;
+  selectedFile=file;encoded=null;analysis=null;selectedBodies=null;counts=null;bendAngles=null;generatedTradeKey=null;generatedDownload=null;revision++;
   $('generate').disabled=true;$('solve').disabled=true;$('results').classList.add('hidden');$('analysis').classList.add('hidden');$('bodies').classList.add('hidden');$('visualization').classList.add('hidden');$('trade-study').classList.add('hidden');$('progress-panel').classList.add('hidden');$('solver-results').innerHTML='';
   $('file-name').textContent=file.name;$('bend-controls').innerHTML='<p>Detecting bodies and bends…</p>';
   if(!/\.(step|stp)$/i.test(file.name)){message('Choose a STEP or STP file.',true);return}
   if(file.size>50*1024*1024){message('File exceeds the 50 MB limit.',true);return}
   message('Reading CAD file…');
-  try{const bytes=new Uint8Array(await file.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=32768)binary+=String.fromCharCode(...bytes.subarray(i,i+32768));encoded=btoa(binary);if(engineReady)await analyze();else{pendingAnalysis=true;message('STEP file selected. Start the local CAD companion to analyze it. The page will continue automatically.')}}
+  try{const bytes=new Uint8Array(await file.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=32768)binary+=String.fromCharCode(...bytes.subarray(i,i+32768));encoded=btoa(binary);await analyze()}
   catch(e){message(e.message||String(e),true)}
 }
 async function analyze(){
@@ -140,14 +107,13 @@ async function applyTradeOption(index,generateAfter){
 async function generate(){
   if(!encoded||!selectedBodies?.length)return;$('generate').disabled=true;$('results').classList.add('hidden');$('progress-panel').classList.remove('hidden');updateProgress({phase:'Starting CAD worker',percent:0});message('Generating selected bodies and a shared cut schedule…');
   try{const start=await post('/api/generate',requestData());const id=start.job_id;
-    timer=setInterval(async()=>{try{const response=await fetch(apiUrl(`/api/jobs/${id}`));const job=await response.json();if(job.progress)updateProgress(job.progress);if(job.status==='working')return;clearInterval(timer);timer=null;$('generate').disabled=false;
+    timer=setInterval(async()=>{try{const response=await fetch(`/api/jobs/${id}`);const job=await response.json();if(job.progress)updateProgress(job.progress);if(job.status==='working')return;clearInterval(timer);timer=null;$('generate').disabled=false;
       if(job.status==='error'){updateProgress({phase:'Generation failed',percent:Number($('job-progress').value)});message(job.error,true);return}updateProgress({phase:'Package ready',percent:100});render(job.report,job.download);message('Package ready. The ZIP includes one complete positioned STEP assembly and all individual pieces.')}
       catch(e){clearInterval(timer);timer=null;$('generate').disabled=false;message(e.message,true)}},1200);
   }catch(e){$('generate').disabled=false;$('progress-panel').classList.add('hidden');message(e.message,true)}
 }
 function updateProgress(p){const percent=Math.round(Number(p.percent)||0);$('job-progress').value=percent;$('job-percent').textContent=percent+'%';$('job-stage').textContent=p.phase||'Working…';$('job-pieces').textContent=p.total?`${p.completed||0} of ${p.total} pieces cut`:''}
 function render(r,download){
-  download=apiUrl(download);
   $('download').href=download;const e=r.geometry_error,weld=r.weld.expected_full_circumference_mm;
   generatedTradeKey=JSON.stringify([r.segments_per_body,r.bend_angles_per_body]);generatedDownload=download;if(tradeOptions.length)showTradeOption(tradeSelected);
   const items=[['SELECTED BODIES',r.body_count,'tube solids'],['UNIQUE CUTS',r.unique_cut_profile_count,'shared profiles'],['TOTAL PIE CUTS',r.total_pie_cut_count,'pieces'],['TOTAL PARTS',r.piece_count,'incl. straights'],['EXPECTED WELD',mm(weld),'mm · '+inch(weld)+' in'],['CENTERLINE RMS ERROR',mm(e.centerline_rms_deviation_mm),'mm · max '+mm(e.centerline_max_deviation_mm)+' mm'],['OCCUPIED VOLUME ERROR',mm(e.occupied_volume_error_percent)+'%',mm(e.occupied_volume_error_mm3)+' mm³'],['SPLINE LENGTH DELTA',mm(e.centerline_length_delta_mm),'mm · '+inch(e.centerline_length_delta_mm)+' in']];

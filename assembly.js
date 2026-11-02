@@ -41,8 +41,12 @@
     }catch(error){$('assembly-progress').classList.add('hidden');$('assembly-generate').disabled=false;say(error.message,true)}
   }
   document.querySelectorAll('[data-workflow]').forEach(button=>button.addEventListener('click',()=>{
-    const assembly=button.dataset.workflow==='assembly';$('conversion-pane').classList.toggle('hidden',assembly);$('assembly-pane').classList.toggle('hidden',!assembly);
+    const workflow=button.dataset.workflow;
+    $('conversion-pane').classList.toggle('hidden',workflow!=='conversion');
+    $('assembly-pane').classList.toggle('hidden',workflow!=='assembly');
+    $('tutorial-pane').classList.toggle('hidden',workflow!=='tutorial');
     document.querySelectorAll('[data-workflow]').forEach(b=>b.classList.toggle('active',b===button));
+    if(workflow==='tutorial')$('tutorial-pane').scrollIntoView({behavior:'smooth',block:'start'});
   }));
   $('assembly-file').addEventListener('change',event=>choose(event.target.files[0]));
   const drop=$('assembly-drop');drop.addEventListener('dragover',event=>{event.preventDefault();drop.classList.add('dragover')});drop.addEventListener('dragleave',()=>drop.classList.remove('dragover'));
