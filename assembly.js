@@ -6,7 +6,7 @@
   const fixed=n=>Number(n).toFixed(2);
   async function post(route,body){
     const response=await fetch(routeUrl(route),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    const result=await response.json();if(!response.ok)throw Error(result.error||'CAD request failed');return result;
+    return typeof jsonResponse==='function'?jsonResponse(response):response.json();
   }
   function render(a){
     $('assembly-analysis').innerHTML=`<h3>Assembly geometry</h3><div class="analysis-line"><span>Separate pie-cut solids</span><strong>${a.piece_count}</strong></div><div class="analysis-line"><span>Matched weld seams</span><strong>${a.joint_count}</strong></div><div class="analysis-line"><span>Connected tube runs</span><strong>${a.connected_run_count}</strong></div><div class="analysis-line"><span>Open tube ends</span><strong>${a.open_end_count}</strong></div><div class="analysis-line"><span>Total outside weld length</span><strong>${fixed(a.outside_weld_length_mm)} mm · ${fixed(a.outside_weld_length_mm/25.4)} in</strong></div><p class="preview-note">${a.method} ${a.limitations}</p>`;
@@ -29,7 +29,7 @@
       const id=started.job_id;
       poll=setInterval(async()=>{
         try{
-          const response=await fetch(routeUrl(`/api/jobs/${id}`),{cache:'no-store'});const result=await response.json();
+          const response=await fetch(routeUrl(`/api/jobs/${id}`),{cache:'no-store'});const result=typeof jsonResponse==='function'?await jsonResponse(response):await response.json();
           if(result.status==='working')return;
           clearInterval(poll);poll=null;$('assembly-progress').classList.add('hidden');$('assembly-generate').disabled=false;
           if(result.status==='error')throw Error(result.error||'Jig generation failed');

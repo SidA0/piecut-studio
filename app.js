@@ -2,9 +2,11 @@ const $=id=>document.getElementById(id);
 let selectedFile=null,encoded=null,analysis=null,selectedBodies=null,counts=null,bendAngles=null,timer=null,revision=0,tradeOptions=[],tradeSelected=0,generatedTradeKey=null,generatedDownload=null;
 const mm=n=>Number(n).toFixed(2),inch=n=>(Number(n)/25.4).toFixed(2),feet=n=>(Number(n)/304.8).toFixed(2);
 const prec=n=>Number(n).toFixed(3);
+const apiUrl=route=>location.hostname==='127.0.0.1'||location.hostname==='localhost'?route:`http://127.0.0.1:8765${route}`;
 function message(s,error=false){$('message').textContent=s;$('message').classList.toggle('error',error)}
 function requestData(extra={}){return {filename:selectedFile.name,data:encoded,options:{max_angle:Number($('max-angle').value),selected_bodies:selectedBodies,segments:counts,bend_angles:bendAngles,jig:$('jig').checked,id_holes:$('id-holes').checked,trade_study:$('trade-study-toggle').checked,experimental_standard_radius:$('standard-radius').checked,profile_weight:Number($('profile-weight').value),...extra}}}
-async function post(route,data){const response=await fetch(route,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const result=await response.json();if(!response.ok)throw Error(result.error||'Request failed');return result}
+async function jsonResponse(response){const text=await response.text();let result;try{result=JSON.parse(text)}catch{const type=response.headers.get('content-type')||'';throw Error(response.ok?`CAD companion returned ${type||'an unreadable response'}.`:`CAD request failed (${response.status}). Start the local CAD companion and try again.`)}if(!response.ok)throw Error(result.error||`CAD request failed (${response.status})`);return result}
+async function post(route,data){let response;try{response=await fetch(apiUrl(route),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})}catch{throw Error('Cannot reach the local CAD companion at 127.0.0.1:8765. Start it, keep its window open, and try again.')}return jsonResponse(response)}
 async function readFile(file){
   if(!file)return;
   if(timer){clearInterval(timer);timer=null}
@@ -107,15 +109,15 @@ async function applyTradeOption(index,generateAfter){
 async function generate(){
   if(!encoded||!selectedBodies?.length)return;$('generate').disabled=true;$('results').classList.add('hidden');$('progress-panel').classList.remove('hidden');updateProgress({phase:'Starting CAD worker',percent:0});message('Generating selected bodies and a shared cut schedule…');
   try{const start=await post('/api/generate',requestData());const id=start.job_id;
-    timer=setInterval(async()=>{try{const response=await fetch(`/api/jobs/${id}`);const job=await response.json();if(job.progress)updateProgress(job.progress);if(job.status==='working')return;clearInterval(timer);timer=null;$('generate').disabled=false;
+    timer=setInterval(async()=>{try{const response=await fetch(apiUrl(`/api/jobs/${id}`));const job=await jsonResponse(response);if(job.progress)updateProgress(job.progress);if(job.status==='working')return;clearInterval(timer);timer=null;$('generate').disabled=false;
       if(job.status==='error'){updateProgress({phase:'Generation failed',percent:Number($('job-progress').value)});message(job.error,true);return}updateProgress({phase:'Package ready',percent:100});render(job.report,job.download);message('Package ready. The ZIP includes one complete positioned STEP assembly and all individual pieces.')}
       catch(e){clearInterval(timer);timer=null;$('generate').disabled=false;message(e.message,true)}},1200);
   }catch(e){$('generate').disabled=false;$('progress-panel').classList.add('hidden');message(e.message,true)}
 }
 function updateProgress(p){const percent=Math.round(Number(p.percent)||0);$('job-progress').value=percent;$('job-percent').textContent=percent+'%';$('job-stage').textContent=p.phase||'Working…';$('job-pieces').textContent=p.total?`${p.completed||0} of ${p.total} pieces cut`:''}
 function render(r,download){
-  $('download').href=download;const e=r.geometry_error,weld=r.weld.expected_full_circumference_mm,stock=r.stock?.total_tube_length_mm??e.pie_centerline_length_mm;
-  generatedTradeKey=JSON.stringify([r.segments_per_body,r.bend_angles_per_body]);generatedDownload=download;if(tradeOptions.length)showTradeOption(tradeSelected);
+  $('download').href=apiUrl(download);const e=r.geometry_error,weld=r.weld.expected_full_circumference_mm,stock=r.stock?.total_tube_length_mm??e.pie_centerline_length_mm;
+  generatedTradeKey=JSON.stringify([r.segments_per_body,r.bend_angles_per_body]);generatedDownload=apiUrl(download);if(tradeOptions.length)showTradeOption(tradeSelected);
   const items=[['SELECTED BODIES',r.body_count,'tube solids'],['UNIQUE CUTS',r.unique_cut_profile_count,'shared profiles'],['TOTAL PIE CUTS',r.total_pie_cut_count,'pieces'],['TOTAL PARTS',r.piece_count,'incl. straights'],['TOTAL TUBE STOCK',mm(stock),'mm · '+inch(stock)+' in · '+feet(stock)+' ft'],['EXPECTED WELD',mm(weld),'mm · '+inch(weld)+' in'],['CENTERLINE RMS ERROR',mm(e.centerline_rms_deviation_mm),'mm · max '+mm(e.centerline_max_deviation_mm)+' mm'],['OCCUPIED VOLUME ERROR',mm(e.occupied_volume_error_percent)+'%',mm(e.occupied_volume_error_mm3)+' mm³'],['SPLINE LENGTH DELTA',mm(e.centerline_length_delta_mm),'mm · '+inch(e.centerline_length_delta_mm)+' in']];
   if(r.standardization)items.push(['STANDARD MIDDLE CUTS',r.standardization.standard_piece_count,'reusable pieces'],['CUSTOM PIE CUTS',r.standardization.custom_pie_piece_count,'ends and transitions']);
   $('metrics').innerHTML=items.map(([label,value,unit])=>`<div class="metric"><span>${label}</span><strong>${value}</strong><small>${unit}</small></div>`).join('');
